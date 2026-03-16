@@ -478,16 +478,12 @@
       sel.value = current;
     }
 
-    function matches(card, q, tag){
-      if(tag && !(card.tags||[]).includes(tag)) return false;
-      if(!q) return true;
-      const s = (card.front+'
-'+card.back+'
-'+(card.example||'')+'
-'+(card.tags||[]).join(','))
-        .toLowerCase();
-      return s.includes(q.toLowerCase());
-    }
+function matches(card, q, tag){
+  if(tag && !(card.tags||[]).includes(tag)) return false;
+  if(!q) return true;
+  const s = `${card.front}\n${card.back}\n${card.example||''}\n${(card.tags||[]).join(',')}`.toLowerCase();
+  return s.includes(q.toLowerCase());
+}
 
     function renderList(){
       renderTagFilter();
