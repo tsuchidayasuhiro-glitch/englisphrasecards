@@ -234,6 +234,20 @@
           <button class="btn" id="sampleBtn">サンプルを追加</button>
           <button class="btn danger right" id="clearBtn">全消し</button>
         </div>
+        <div class="hr"></div>
+        <h2>一括削除（タグ指定）</h2>
+        <div class="muted small">カンマ区切りでタグを入れると、その<strong>全タグを含む</strong>カードをまとめて削除します（例：<span class="mono">business,collocation,toeic</span>）。</div>
+        <div class="split" style="margin-top:10px">
+          <div class="field">
+            <label>削除するタグ（AND条件）</label>
+            <input id="bulkDeleteTags" placeholder="business,collocation,toeic" />
+          </div>
+          <div class="field">
+            <label>&nbsp;</label>
+            <button class="btn danger" id="bulkDeleteBtn">このタグのカードを一括削除</button>
+          </div>
+        </div>
+
 
         <div class="hr"></div>
         <div class="muted small">
@@ -956,6 +970,33 @@ function matches(card, q, tag){
         toast('全消ししました');
       }
     });
+
+    // ====== Bulk delete by tags (AND) ======
+    const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
+    if(bulkDeleteBtn){
+      bulkDeleteBtn.addEventListener('click', ()=>{
+        const input = document.getElementById('bulkDeleteTags');
+        const tags = (input?.value || '')
+          .split(',')
+          .map(t=>t.trim())
+          .filter(Boolean);
+        if(tags.length === 0){
+          toast('タグを入力してください');
+          return;
+        }
+        const before = store.cards.length;
+        const toDelete = store.cards.filter(c => tags.every(t => (c.tags||[]).includes(t))).length;
+        if(toDelete === 0){
+          toast('該当カードがありません');
+          return;
+        }
+        if(!confirm(`「${tags.join(', ')}」を全て含むカード ${toDelete}枚を削除します。よろしいですか？`)) return;
+        store.cards = store.cards.filter(c => !tags.every(t => (c.tags||[]).includes(t)));
+        store.updatedAtMs = now();
+        save();
+        toast(`削除しました（${before}→${store.cards.length}）`);
+      });
+    }
 
     // ====== Refresh ======
     function refreshStats(){
