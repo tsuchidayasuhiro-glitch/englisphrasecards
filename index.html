@@ -77,16 +77,16 @@
       <div class="card">
         <h2>今日のカード</h2>
         <div class="muted small" id="dueInfo">…</div>
-
         <div class="row" style="margin:8px 0 0; gap:10px">
           <span class="muted small">モード</span>
           <select id="modeSelect">
             <option value="free">自由（いつでも）</option>
             <option value="due">期日（SRS）</option>
             <option value="new">未学習</option>
-            <option value="weak">弱点（苦手）</option>
+            <option value="weak">弱点（苦手寄り）</option>
           </select>
         </div>
+
         <div class="big mono" id="frontText">—</div>
         <div id="answerBox" style="display:none">
           <div class="hr"></div>
@@ -372,7 +372,6 @@
 
       const due = now() + interval * dayMs;
       card.srs = {interval, repetition, ease, due};
-      card.lastReviewedAt = now();
       touch(card);
     }
 
@@ -385,28 +384,38 @@
     let currentCard = null;
     let revealed = false;
 
-    // ====== Study mode / Progress ======
+    // ====== Study mode (自由/期日/未学習/弱点) ======
     const MODE_KEY = 'phrasecards_mode';
-    let studyMode = localStorage.getItem(MODE_KEY) || 'free'; // default: free
+    let studyMode = localStorage.getItem(MODE_KEY) || 'free'; // ←デフォルトは自由
 
     function setStudyMode(m){
-      studyMode = m || 'free';
+      studyMode = m;
       localStorage.setItem(MODE_KEY, studyMode);
       buildQueue(true);
       pickNext();
       refreshStats();
     }
 
+    // 学習済み = 一度でも評価（Again/Hard/Good/Easy）したカード
     function studiedCount(){
-      // considered “studied” if reviewed at least once
-      return store.cards.filter(c => (Number(c?.srs?.repetition||0) > 0) || (Number(c?.lastReviewedAt||0) > 0)).length;
+      return store.cards.filter(c => Number(c.srs?.repetition || 0) > 0).length;
     }
 
+    // 今日レビュー = 今日0:00以降に updatedAt が更新されたカード数
     function reviewedTodayCount(){
       const d = new Date();
       d.setHours(0,0,0,0);
       const start = d.getTime();
-      return store.cards.filter(c => Number(c?.lastReviewedAt||0) >= start).length;
+      return store.cards.filter(c => Number(c.updatedAt||0) >= start).length;
+    }
+
+    function modeLabel(){
+      switch(studyMode){
+        case 'due': return '期日（SRS）';
+        case 'new': return '未学習';
+        case 'weak': return '弱点';
+        default: return '自由';
+      }
     }
 
     // ====== Views ======
@@ -439,13 +448,16 @@
           .filter(isDue)
           .sort((a,b)=> (a.srs?.due??0) - (b.srs?.due??0));
       } else if(studyMode === 'new'){
-        base = store.cards.filter(c => (Number(c?.srs?.repetition||0) === 0) && (Number(c?.lastReviewedAt||0) === 0));
+        base = store.cards.filter(c => Number(c.srs?.repetition || 0) === 0);
+        shuffle = true;
       } else if(studyMode === 'weak'){
+        // ease が低い（苦手）順に上位300枚だけ
         base = store.cards.slice()
           .sort((a,b)=> (a.srs?.ease ?? 2.5) - (b.srs?.ease ?? 2.5))
           .slice(0, Math.min(300, store.cards.length));
+        shuffle = true;
       } else {
-        // free
+        // free: 全カードをシャッフルして回す
         base = store.cards.slice();
         shuffle = true;
       }
@@ -460,25 +472,35 @@
       $('studyControls').style.display = 'flex';
       $('revealBtn').disabled = false;
 
-      // If queue is empty but we have cards, rebuild (especially in free mode)
-      if(studyQueue.length === 0 && store.cards.length > 0){
-        buildQueue(true);
-      }
-
-      if(studyQueue.length === 0){
+      if(store.cards.length === 0){
         currentCard = null;
-        $('frontText').textContent = (store.cards.length === 0) ? 'カードがありません' : '今日の分は完了！';
+        $('frontText').textContent = 'カードがありません';
         $('backText').textContent = '';
         $('exampleText').textContent = '';
         $('nextDueHint').textContent = '';
+        $('dueInfo').textContent = '右の「クイック追加」か「追加」タブからカードを入れてください。';
+        return;
+      }
 
-        if(store.cards.length === 0){
-          $('dueInfo').textContent = '右の「クイック追加」か「追加」タブからカードを入れてください。';
-        } else if(studyMode === 'due'){
-          $('dueInfo').textContent = '期日になったカードがありません。モードを「自由（いつでも）」に切り替えるといつでも勉強できます。';
-        } else {
-          $('dueInfo').textContent = `全${store.cards.length}枚あります。モードやシャッフルで回せます。`;
-        }
+      // いつでも回せるように、空なら自動で組み直す（freeなら無限に回せる）
+      if(studyQueue.length === 0){
+        buildQueue(true);
+      }
+
+      // 期日モードで0枚なら、自由に切り替えて続行（制限しない）
+      if(studyQueue.length === 0 && studyMode === 'due'){
+        setStudyMode('free');
+        return;
+      }
+
+      if(studyQueue.length === 0){
+        // 念のため
+        currentCard = null;
+        $('frontText').textContent = '準備中…';
+        $('backText').textContent = '';
+        $('exampleText').textContent = '';
+        $('nextDueHint').textContent = '';
+        refreshStats();
         return;
       }
 
@@ -486,15 +508,8 @@
       $('frontText').textContent = currentCard.front;
       $('backText').textContent = currentCard.back;
       $('exampleText').textContent = currentCard.example || '—';
+      $('nextDueHint').textContent = '';
       refreshStats();
-      $('nextDueHint').textContent = '';
-    }
-      currentCard = studyQueue.shift();
-      $('frontText').textContent = currentCard.front;
-      $('backText').textContent = currentCard.back;
-      $('exampleText').textContent = currentCard.example || '—';
-      $('dueInfo').textContent = `今日の期日: ${countDue()}枚 / 全${store.cards.length}枚`;
-      $('nextDueHint').textContent = '';
     }
 
     function normalizeTags(s){
@@ -945,25 +960,27 @@ function matches(card, q, tag){
     // ====== Refresh ======
     function refreshStats(){
       const total = store.cards.length;
-      const studied = studiedCount();
       const today = reviewedTodayCount();
-      const due = countDue();
+      const studied = studiedCount();
 
-      const modeLabel = (studyMode==='due') ? '期日' : (studyMode==='new' ? '未学習' : (studyMode==='weak' ? '弱点' : '自由'));
-      const main = `今日レビュー: ${today} / 学習済: ${studied} / 全${total}（モード: ${modeLabel}）`;
-      $('statsPill').textContent = main;
-      $('dueInfo').textContent = (studyMode==='due') ? `${main} / 期日: ${due}枚` : main;
+      $('statsPill').textContent = `今日レビュー: ${today} / 学習済: ${studied} / 全${total}`;
+      const due = countDue();
+      const extra = (studyMode === 'due') ? ` / 期日: ${due}枚` : '';
+      $('dueInfo').textContent = `モード: ${modeLabel()} / 今日レビュー: ${today} / 学習済: ${studied} / 全${total}` + extra;
     }
 
     function refreshAll(){
       refreshStats();
       renderTagFilter();
       buildQueue(false);
-      if(!currentCard || !store.cards.find(c=>c.id===currentCard.id)){
+
+      const exists = currentCard && store.cards.find(c=>c.id===currentCard.id);
+      if(!exists){
+        pickNext();
+      } else if(studyMode === 'due' && !isDue(currentCard)){
         pickNext();
       }
-      if(document.getElementById('view-list').style.display !== 'none') renderList();
-    }
+
       if(document.getElementById('view-list').style.display !== 'none') renderList();
     }
 
@@ -986,7 +1003,7 @@ function matches(card, q, tag){
     // ====== Boot ======
     loadLocal();
 
-    // init mode selector (persisted)
+    // mode UI
     const modeSel = $('modeSelect');
     if(modeSel){
       modeSel.value = studyMode;
