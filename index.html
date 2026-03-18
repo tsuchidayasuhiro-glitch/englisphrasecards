@@ -290,38 +290,6 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
-
-  <script>
-    // ===== Mobile Debug (always runs) =====
-    (function(){
-      function byId(id){ return document.getElementById(id); }
-      function show(msg){
-        var el = byId('authError');
-        if(el){ el.style.display='inline'; el.textContent = msg; }
-        var pill = byId('statsPill');
-        if(pill){ pill.textContent = 'Debug: ' + msg; }
-        console.log('[DEBUG]', msg);
-      }
-      window.addEventListener('error', function(e){
-        show('JS error: ' + (e && e.message ? e.message : 'unknown'));
-      });
-      window.addEventListener('unhandledrejection', function(e){
-        var reason = (e && e.reason) ? (e.reason.message || e.reason.code || String(e.reason)) : 'unknown';
-        show('Promise error: ' + reason);
-      });
-      document.addEventListener('DOMContentLoaded', function(){
-        var btn = byId('loginBtn');
-        if(btn){
-          btn.addEventListener('click', function(){
-            // If app JS hasn't wired yet, at least we show feedback.
-            show('loginBtn tapped');
-          }, {capture:true});
-        }
-        show('page loaded');
-      });
-    })();
-  </script>
-
 <script>
     // =====================================
     // 0) Firebase設定（ここを置き換える）
@@ -774,7 +742,7 @@ function matches(card, q, tag){
     });
 
 // ====== Cloud Sync (Firebase) ======
-    // NOTE: Use Firebase compat SDK (no dynamic import) for better mobile support.
+    // Mobile-first: Firebase compat SDK + popup-first (redirect fallback) + chunked Firestore.
     let cloudEnabled = false;
     let app = null, auth = null, db = null;
     let currentUser = null;
@@ -782,14 +750,6 @@ function matches(card, q, tag){
     let lastRemoteUpdatedAtMs = 0;
 
     const CHUNK_SIZE = 150; // keep Firestore docs under 1MB
-
-    // Debounced push
-    let pushTimer = null;
-    function debouncePush(){
-      if(!cloudEnabled || !currentUser) return;
-      clearTimeout(pushTimer);
-      pushTimer = setTimeout(()=>pushToCloud().catch(()=>{}), 900);
-    }
 
     function validFirebaseConfig(cfg){
       return cfg && cfg.apiKey && !String(cfg.apiKey).includes('YOUR_') && cfg.projectId && cfg.appId && cfg.authDomain;
@@ -807,6 +767,17 @@ function matches(card, q, tag){
       }
     }
 
+    function setSyncUI(text){
+      $('syncStatus').textContent = text;
+      $('syncPill').textContent = text;
+    }
+
+    function isInAppBrowser(){
+      const ua = navigator.userAgent || '';
+      // rough detection (LINE, Instagram, FB, Gmail, etc.)
+      return /Line|FBAN|FBAV|Instagram|GSA|MicroMessenger|Twitter|X\/|WebView/i.test(ua) && !/Safari/i.test(ua);
+    }
+
     function mergeStores(local, remote){
       const l = (local && local.cards) ? local.cards : [];
       const r = (remote && remote.cards) ? remote.cards : [];
@@ -816,10 +787,7 @@ function matches(card, q, tag){
         if(!c || !c.id) return;
         const cur = map.get(c.id);
         const cu = Number(c.updatedAt ?? c.createdAt ?? 0);
-        if(!cur){
-          map.set(c.id, c);
-          return;
-        }
+        if(!cur){ map.set(c.id, c); return; }
         const pu = Number(cur.updatedAt ?? cur.createdAt ?? 0);
         if(cu >= pu) map.set(c.id, c);
       };
@@ -848,10 +816,12 @@ function matches(card, q, tag){
     }
 
     async function initFirebase(){
-      // Always make button tappable; show feedback if not configured.
-      try{
-        $('loginBtn')?.addEventListener('click', ()=>{ if(!cloudEnabled) toast('同期設定が無効です（firebaseConfig / Authorized domains を確認）'); });
-      }catch(e){}
+      // Make button always "do something" so user isn't stuck.
+      $('loginBtn')?.addEventListener('click', ()=>{
+        if(!cloudEnabled){
+          toast('同期が有効になっていません（firebaseConfig / Authorized domains を確認）');
+        }
+      }, {capture:true});
 
       if(!validFirebaseConfig(firebaseConfig)){
         setSyncUI('Sync: Off（未設定）');
@@ -861,7 +831,7 @@ function matches(card, q, tag){
 
       if(!window.firebase){
         setSyncUI('Sync: Firebase load error');
-        setAuthError('Firebase SDKが読み込めませんでした（通信/ブロッカー/古いブラウザの可能性）');
+        setAuthError('Firebase SDKが読み込めません（通信/ブロッカー/古いブラウザ）');
         cloudEnabled = false;
         return;
       }
@@ -882,36 +852,49 @@ function matches(card, q, tag){
         return;
       }
 
-      // Keep login across refresh (mobile friendly)
-      try{ await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
+      // Persistence: LOCAL -> SESSION -> NONE
+      try{ await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); }
+      catch(e1){
+        try{ await auth.setPersistence(firebase.auth.Auth.Persistence.SESSION); }
+        catch(e2){
+          try{ await auth.setPersistence(firebase.auth.Auth.Persistence.NONE); }catch(e3){}
+        }
+      }
 
-      // Handle redirect result (mobile)
+      // Redirect result (mobile)
       try{
         await auth.getRedirectResult();
       }catch(e){
         setAuthError('Login error: ' + (e && (e.code||e.message) ? (e.code||e.message) : e));
       }
 
-      // UI handlers (explicit)
+      // Button handlers
       $('loginBtn').onclick = async ()=>{
         if(!cloudEnabled) return;
         setAuthError('');
         const provider = new firebase.auth.GoogleAuthProvider();
+
+        // In-app browsers often break redirect session; warn early.
+        if(isInAppBrowser()){
+          toast('アプリ内ブラウザだとログインが失敗しやすいです。Safari/Chromeで開いてください');
+        }
+
+        // Popup-first: avoids redirect session loss on some mobile browsers.
         try{
-          if(isMobile()) await auth.signInWithRedirect(provider);
-          else await auth.signInWithPopup(provider);
+          await auth.signInWithPopup(provider);
+          return;
         }catch(e){
-          const code = (e && e.code) ? String(e.code) : '';
-          const msg = (e && e.message) ? String(e.message) : String(e);
-          setAuthError('Login error: ' + (code || msg));
-          // fallback
-          try{ await auth.signInWithRedirect(provider); }catch(_e){}
-          toast('ログインに失敗しました（FirebaseのAuthorized domainsを確認）');
+          const code = String(e?.code||'');
+          // Fall back to redirect when popup is blocked/not supported.
+          if(code.includes('popup') || code.includes('operation-not-supported') || code.includes('web-storage-unsupported')){
+            try{ await auth.signInWithRedirect(provider); return; }catch(_e){}
+          }
+          setAuthError('Login error: ' + (code || String(e?.message||e)));
+          toast('ログインに失敗しました（Authorized domains / ブラウザ設定を確認）');
         }
       };
 
       $('logoutBtn').onclick = async ()=>{
-        if(!auth) return;
         try{ await auth.signOut(); }catch(e){}
       };
 
@@ -922,6 +905,7 @@ function matches(card, q, tag){
       auth.onAuthStateChanged(async (user)=>{
         currentUser = user || null;
         if(unsubMeta){ unsubMeta(); unsubMeta = null; }
+
         if(!currentUser){
           setSyncUI('Sync: Off');
           $('syncNowBtn').disabled = true;
@@ -938,7 +922,7 @@ function matches(card, q, tag){
         // Initial pull
         const ok = await pullFromCloud();
         if(!ok){
-          // If cloud empty: seed only if local has cards
+          // Seed cloud only if local has cards
           if((store.cards||[]).length>0){
             await pushToCloud();
             toast('クラウドを初期化しました');
@@ -948,7 +932,7 @@ function matches(card, q, tag){
           }
         }
 
-        // Listen to meta doc only (cheap). When updatedAtMs changes, pull chunks.
+        // Listen meta changes
         const mref = metaRef(currentUser.uid);
         unsubMeta = mref.onSnapshot(async (snap)=>{
           if(!snap.exists) return;
@@ -968,10 +952,10 @@ function matches(card, q, tag){
       async function pullFromCloud(){
         if(!currentUser) return false;
         const uid = currentUser.uid;
-        const mref = metaRef(uid);
+
         let msnap;
         try{
-          msnap = await mref.get();
+          msnap = await metaRef(uid).get();
         }catch(e){
           setSyncUI('Sync: Error');
           setAuthError('Cloud read error: ' + (e && (e.code||e.message) ? (e.code||e.message) : e));
@@ -1029,17 +1013,15 @@ function matches(card, q, tag){
         if(store.updatedAtMs < now()) store.updatedAtMs = now();
         const chunks = chunkCards(store.cards);
 
-        const mref = metaRef(uid);
-        const ccol = chunksCol(uid);
-
         const batch = db.batch();
-        batch.set(mref, {
+        batch.set(metaRef(uid), {
           version: 2,
           updatedAtMs: store.updatedAtMs,
           chunkSize: CHUNK_SIZE,
           chunkCount: chunks.length,
         }, { merge: true });
 
+        const ccol = chunksCol(uid);
         for(let i=0;i<chunks.length;i++){
           const id = String(i).padStart(3,'0');
           batch.set(ccol.doc(id), {
@@ -1049,7 +1031,7 @@ function matches(card, q, tag){
           }, { merge: false });
         }
 
-        // Delete old extra chunks if any (best effort)
+        // best-effort delete extras
         try{
           const existing = await ccol.get();
           existing.forEach(doc=>{
@@ -1072,11 +1054,6 @@ function matches(card, q, tag){
       }
 
       window.__pushToCloud = ()=>pushToCloud();
-    }
-
-    function setSyncUI(text){
-      $('syncStatus').textContent = text;
-      $('syncPill').textContent = text;
     }
 
 
