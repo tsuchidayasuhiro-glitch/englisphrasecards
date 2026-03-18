@@ -290,7 +290,39 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
-<script type="module">
+
+  <script>
+    // ===== Mobile Debug (always runs) =====
+    (function(){
+      function byId(id){ return document.getElementById(id); }
+      function show(msg){
+        var el = byId('authError');
+        if(el){ el.style.display='inline'; el.textContent = msg; }
+        var pill = byId('statsPill');
+        if(pill){ pill.textContent = 'Debug: ' + msg; }
+        console.log('[DEBUG]', msg);
+      }
+      window.addEventListener('error', function(e){
+        show('JS error: ' + (e && e.message ? e.message : 'unknown'));
+      });
+      window.addEventListener('unhandledrejection', function(e){
+        var reason = (e && e.reason) ? (e.reason.message || e.reason.code || String(e.reason)) : 'unknown';
+        show('Promise error: ' + reason);
+      });
+      document.addEventListener('DOMContentLoaded', function(){
+        var btn = byId('loginBtn');
+        if(btn){
+          btn.addEventListener('click', function(){
+            // If app JS hasn't wired yet, at least we show feedback.
+            show('loginBtn tapped');
+          }, {capture:true});
+        }
+        show('page loaded');
+      });
+    })();
+  </script>
+
+<script>
     // =====================================
     // 0) Firebase設定（ここを置き換える）
     // =====================================
