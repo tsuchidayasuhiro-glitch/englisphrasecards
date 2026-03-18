@@ -630,18 +630,8 @@ function matches(card, q, tag){
     function examplePreview(c){
       const ex = (c.example||'').trim();
       if(!ex) return '';
-      const lines = ex.split('\n');
-      const en = (lines[0]||'').trim();
-
-      // バイリンガルなら2行目に日本語が入っている想定。
-      // 念のため、2行目以降で日本語文字（ひらがな/カタカナ/漢字）を含む行を探す。
-      let ja = (lines[1]||'').trim();
-      for(let k=1;k<lines.length;k++){
-        if(/[\u3040-\u30FF\u4E00-\u9FFF]/.test(lines[k])){ ja = lines[k].trim(); break; }
-      }
-
-      const out = [en, ja].filter(Boolean).join('\n');
-      return out.slice(0, 360);
+      // 例文は1行目だけ（バイリンガルの英語行）
+      return ex.split('\n')[0].slice(0, 200);
     }
 
     function renderList(){
@@ -802,28 +792,44 @@ function matches(card, q, tag){
         import(`https://www.gstatic.com/firebasejs/${FB_VER}/firebase-firestore.js`),
       ]);
 
-      const { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } = authMod;
+      const { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, setPersistence, browserLocalPersistence } = authMod;
       const { getFirestore, doc, getDoc, setDoc, onSnapshot } = fsMod;
 
       app = initializeApp(firebaseConfig);
       auth = getAuth(app);
+      // keep login across refresh (mobile friendly)
+      try{ await setPersistence(auth, browserLocalPersistence); }catch(e){}
       db = getFirestore(app);
       cloudEnabled = true;
 
       // Handle redirect result (mobile)
-      try{ await getRedirectResult(auth); }catch(e){ /* ignore */ }
+      try{
+        const rr = await getRedirectResult(auth);
+        if(rr && rr.user){ $('authError').style.display='none'; }
+      }catch(e){
+        const msg = (e && (e.code||e.message)) ? String(e.code||e.message) : 'auth redirect error';
+        $('authError').textContent = 'Login error: ' + msg;
+        $('authError').style.display = 'inline';
+      }
 
       // UI handlers
       $('loginBtn').addEventListener('click', async ()=>{
         if(!cloudEnabled) return;
         const provider = new GoogleAuthProvider();
+        $('authError').style.display='none';
         try{
           if(isMobile()) await signInWithRedirect(auth, provider);
           else await signInWithPopup(auth, provider);
         }catch(e){
-          // fallback
-          try{ await signInWithRedirect(auth, provider); }catch(_e){}
-          toast('ログインに失敗しました（ドメイン許可やポップアップ設定を確認）');
+          const code = String(e?.code||'');
+          const msg = String(e?.message||e);
+          $('authError').textContent = 'Login error: ' + (code||msg);
+          $('authError').style.display = 'inline';
+          // fallback to redirect for popup-blocked etc.
+          if(code.includes('popup') || code.includes('operation-not-supported')){
+            try{ await signInWithRedirect(auth, provider); }catch(_e){}
+          }
+          toast('ログインに失敗しました（FirebaseのAuthorized domainsを確認）');
         }
       });
 
@@ -860,8 +866,13 @@ function matches(card, q, tag){
           const remote = snap.data();
           applyRemote(remote);
         } else {
-          // first time: push local
-          await pushToCloud();
+          // first time: if local has cards, seed cloud; otherwise do NOT create empty cloud.
+          if((store.cards||[]).length>0){
+            await pushToCloud();
+          }else{
+            setSyncUI('Sync: Cloud empty (no cards)');
+            toast('クラウドにカードがありません。PCでログインして同期（アップロード）するか、JSONをインポートしてください');
+          }
         }
 
         // Live updates
