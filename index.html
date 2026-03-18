@@ -53,47 +53,69 @@
     .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(10,16,34,.92);border:1px solid var(--line);padding:10px 12px;border-radius:14px;color:var(--text);box-shadow:0 10px 30px rgba(0,0,0,.35);display:none;max-width:92vw}
     .kbd{display:inline-block;border:1px solid var(--line);padding:2px 6px;border-radius:8px;font-size:12px;color:var(--muted)}
 
-    /* ===== Example preview in list (hover / tap) ===== */
-    td.hoverTip{ }
-    td.hoverTip .tip{
-      display:none;
-      margin-top:8px;
-      padding:8px 10px;
-      border-radius:14px;
-      border:1px solid var(--line);
-      background:rgba(10,16,34,.55);
-      white-space:pre-wrap;
-      font-size:12px;
-      line-height:1.5;
-      color:var(--text);
-    }
-    td.hoverTip:hover .tip{display:block}
-    @media (hover:none){
-      td.hoverTip:hover .tip{display:none}
-    }
+  
     .exBtn{
       border:1px solid var(--line);
       background:transparent;
       color:var(--muted);
-      padding:2px 8px;
+      padding:2px 10px;
       border-radius:999px;
       font-size:12px;
       cursor:pointer;
       margin-top:6px;
     }
-    .exInline{
+    .modalOverlay{
+      position:fixed; inset:0;
+      background:rgba(0,0,0,.55);
       display:none;
-      margin-top:8px;
-      padding:8px 10px;
-      border-radius:14px;
+      align-items:flex-end;
+      justify-content:center;
+      padding:16px;
+      z-index:9999;
+    }
+    .modalCard{
+      width:min(920px, 100%);
+      max-height:80vh;
+      overflow:auto;
+      background:var(--card);
       border:1px solid var(--line);
-      background:rgba(10,16,34,.55);
+      border-radius:18px;
+      padding:14px 14px 12px;
+      box-shadow:0 20px 60px rgba(0,0,0,.45);
+    }
+    .modalHead{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:10px;
+    }
+    .modalTitle{
+      font-weight:700;
+      font-size:14px;
+      line-height:1.35;
+      word-break:break-word;
       white-space:pre-wrap;
-      font-size:12px;
-      line-height:1.5;
+    }
+    .modalClose{
+      border:1px solid var(--line);
+      background:transparent;
+      color:var(--muted);
+      padding:4px 10px;
+      border-radius:999px;
+      cursor:pointer;
+      flex:0 0 auto;
+    }
+    .modalBody{
+      white-space:pre-wrap;
+      font-size:13px;
+      line-height:1.6;
       color:var(--text);
     }
-
+    @media (min-width: 860px){
+      .modalOverlay{ align-items:center; }
+      .modalCard{ max-height:70vh; }
+    }
   </style>
 </head>
 <body>
@@ -546,14 +568,10 @@ function matches(card, q, tag){
         const tr = document.createElement('tr');
         const tagsHtml = (c.tags||[]).map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join('');
         const due = c.srs?.due ? fmtDate(c.srs.due) : '—';
-        const ex = (c.example||'').trim();
-        const exHtml = ex ? escapeHtml(ex) : '<span class=\"muted\">—</span>';
         tr.innerHTML = `
-          <td class="hoverTip">
+          <td>
             <div class="mono" style="white-space:pre-wrap">${escapeHtml(c.front)}</div>
-            <div class="tip">${exHtml}</div>
-            <button class="exBtn" data-act="ex" data-id="${c.id}">例文</button>
-            <div class="exInline" id="ex_${c.id}">${exHtml}</div>
+            <button type="button" class="exBtn" data-act="ex" data-id="${c.id}">例文</button>
           </td>
           <td><div style="white-space:pre-wrap">${escapeHtml(c.back)}</div></td>
           <td>${tagsHtml || '<span class="muted">—</span>'}</td>
@@ -567,7 +585,26 @@ function matches(card, q, tag){
       }
     }
 
-    // ====== Cloud Sync (Firebase) ======
+    
+    // ===== Example modal (click) =====
+    function closeExampleModal(){
+      const overlay = $('exModal');
+      if(!overlay) return;
+      overlay.style.display = 'none';
+    }
+    $('exModalClose')?.addEventListener('click', (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      closeExampleModal();
+    });
+    $('exModal')?.addEventListener('click', (e)=>{
+      // click outside the card closes
+      if(e.target && e.target.id==='exModal') closeExampleModal();
+    });
+    document.addEventListener('keydown', (e)=>{
+      if(e.key==='Escape') closeExampleModal();
+    });
+
+// ====== Cloud Sync (Firebase) ======
     let cloudEnabled = false;
     let app = null, auth = null, db = null;
     let currentUser = null;
@@ -821,11 +858,17 @@ function matches(card, q, tag){
       const idx = store.cards.findIndex(c=>c.id===id);
       if(idx<0) return;
 
-      if(act==='ex'){
-        const panel = document.getElementById('ex_'+id);
-        if(panel){
-          panel.style.display = (panel.style.display==='block') ? 'none' : 'block';
-        }
+            if(act==='ex'){
+        e.preventDefault();
+        e.stopPropagation();
+        const c = store.cards[idx];
+        const overlay = $('exModal');
+        const title = $('exModalTitle');
+        const body = $('exModalBody');
+        title.textContent = c.front || '';
+        const ex = (c.example||'').trim();
+        body.textContent = ex ? ex : '（例文なし）';
+        overlay.style.display = 'flex';
         return;
       }
 
@@ -969,5 +1012,15 @@ function matches(card, q, tag){
     // Firebase init (optional)
     initFirebase().catch(()=>setSyncUI('Sync: Off（初期化失敗）'));
   </script>
+
+  <div id="exModal" class="modalOverlay" role="dialog" aria-modal="true" aria-label="例文">
+    <div class="modalCard">
+      <div class="modalHead">
+        <div class="modalTitle" id="exModalTitle"></div>
+        <button type="button" class="modalClose" id="exModalClose">閉じる</button>
+      </div>
+      <div class="modalBody" id="exModalBody"></div>
+    </div>
+  </div>
 </body>
 </html>
