@@ -751,6 +751,17 @@ function matches(card, q, tag){
 
     const CHUNK_SIZE = 150; // keep Firestore docs under 1MB
 
+    // Debounced push (prevents UI from freezing on every tap)
+    let __pushTimer = null;
+    function debouncePush(){
+      try{
+        if(!cloudEnabled || !currentUser || !window.__pushToCloud) return;
+        clearTimeout(__pushTimer);
+        __pushTimer = setTimeout(()=>{ try{ window.__pushToCloud(); }catch(_e){} }, 800);
+      }catch(e){}
+    }
+
+
     function validFirebaseConfig(cfg){
       return cfg && cfg.apiKey && !String(cfg.apiKey).includes('YOUR_') && cfg.projectId && cfg.appId && cfg.authDomain;
     }
@@ -1061,7 +1072,7 @@ function matches(card, q, tag){
     function save(){
       saveLocalOnly();
       refreshAll();
-      debouncePush();
+      if(typeof debouncePush==='function') debouncePush();
     }
 
     // ====== Events ======
