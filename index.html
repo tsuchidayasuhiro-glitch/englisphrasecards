@@ -54,7 +54,14 @@
     .kbd{display:inline-block;border:1px solid var(--line);padding:2px 6px;border-radius:8px;font-size:12px;color:var(--muted)}
   
     .tiny{font-size:11px;line-height:1.4;color:var(--muted);margin-top:6px;white-space:pre-wrap}
-  </style>
+  
+    .actionsInline{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    .actionsInline .btn{padding:6px 10px;border-radius:12px;font-size:12px}
+    @media(max-width:859px){
+      td.actionsCol{display:none}
+    }
+
+</style>
 </head>
 <body>
   <header>
@@ -636,8 +643,23 @@ function matches(card, q, tag){
     function examplePreview(c){
       const ex = (c.example||'').trim();
       if(!ex) return '';
-      // 例文は1行目だけ（バイリンガルの英語行）
-      return ex.split('\n')[0].slice(0, 200);
+      const lines = ex.split('\n').map(s=>s.trim()).filter(Boolean);
+      const en = lines[0] || '';
+      let ja = '';
+      // Find first line (after EN) that contains Japanese chars
+      for(let i=1;i<lines.length;i++){
+        if(/[\u3040-\u30FF\u4E00-\u9FFF]/.test(lines[i])){ ja = lines[i]; break; }
+      }
+      // If bilingual not present, fallback to show a short meaning from back in Japanese.
+      if(!ja){
+        const back = (c.back||'').trim();
+        if(/[\u3040-\u30FF\u4E00-\u9FFF]/.test(back)){
+          // take first chunk before separators
+          ja = back.split(/[／/、,；;・]/)[0].trim();
+        }
+      }
+      const out = [en, ja].filter(Boolean).join('\n');
+      return out.slice(0, 420);
     }
 
     function renderList(){
@@ -686,11 +708,15 @@ function matches(card, q, tag){
           <td>
             <div class="mono" style="white-space:pre-wrap">${escapeHtml(c.front)}</div>
             ${listState.showExample ? `<div class="tiny">${exPrev || '<span class="muted">—</span>'}</div>` : ''}
+            <div class="actionsInline">
+              <button class="btn" data-act="edit" data-id="${c.id}">編集</button>
+              <button class="btn danger" data-act="del" data-id="${c.id}">削除</button>
+            </div>
           </td>
           <td><div style="white-space:pre-wrap">${escapeHtml(c.back)}</div></td>
           <td>${tagsHtml || '<span class="muted">—</span>'}</td>
           <td><span class="small ${isDue(c)?'':'muted'}">${isDue(c)?'今日':due}</span></td>
-          <td>
+          <td class="actionsCol">
             <button class="btn" data-act="edit" data-id="${c.id}">編集</button>
             <button class="btn danger" data-act="del" data-id="${c.id}">削除</button>
           </td>
