@@ -52,70 +52,8 @@
     .hr{height:1px;background:var(--line);margin:12px 0}
     .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(10,16,34,.92);border:1px solid var(--line);padding:10px 12px;border-radius:14px;color:var(--text);box-shadow:0 10px 30px rgba(0,0,0,.35);display:none;max-width:92vw}
     .kbd{display:inline-block;border:1px solid var(--line);padding:2px 6px;border-radius:8px;font-size:12px;color:var(--muted)}
-
   
-    .exBtn{
-      border:1px solid var(--line);
-      background:transparent;
-      color:var(--muted);
-      padding:2px 10px;
-      border-radius:999px;
-      font-size:12px;
-      cursor:pointer;
-      margin-top:6px;
-    }
-    .modalOverlay{
-      position:fixed; inset:0;
-      background:rgba(0,0,0,.55);
-      display:none;
-      align-items:flex-end;
-      justify-content:center;
-      padding:16px;
-      z-index:9999;
-    }
-    .modalCard{
-      width:min(920px, 100%);
-      max-height:80vh;
-      overflow:auto;
-      background:var(--card);
-      border:1px solid var(--line);
-      border-radius:18px;
-      padding:14px 14px 12px;
-      box-shadow:0 20px 60px rgba(0,0,0,.45);
-    }
-    .modalHead{
-      display:flex;
-      align-items:flex-start;
-      justify-content:space-between;
-      gap:12px;
-      margin-bottom:10px;
-    }
-    .modalTitle{
-      font-weight:700;
-      font-size:14px;
-      line-height:1.35;
-      word-break:break-word;
-      white-space:pre-wrap;
-    }
-    .modalClose{
-      border:1px solid var(--line);
-      background:transparent;
-      color:var(--muted);
-      padding:4px 10px;
-      border-radius:999px;
-      cursor:pointer;
-      flex:0 0 auto;
-    }
-    .modalBody{
-      white-space:pre-wrap;
-      font-size:13px;
-      line-height:1.6;
-      color:var(--text);
-    }
-    @media (min-width: 860px){
-      .modalOverlay{ align-items:center; }
-      .modalCard{ max-height:70vh; }
-    }
+    .tiny{font-size:11px;line-height:1.4;color:var(--muted);margin-top:6px;white-space:pre-wrap}
   </style>
 </head>
 <body>
@@ -141,6 +79,16 @@
       <div class="card">
         <h2>今日のカード</h2>
         <div class="muted small" id="dueInfo">…</div>
+        <div class="row" style="margin:8px 0 0; gap:10px">
+          <span class="muted small">モード</span>
+          <select id="modeSelect">
+            <option value="free">自由（いつでも）</option>
+            <option value="due">期日（SRS）</option>
+            <option value="new">未学習</option>
+            <option value="weak">弱点（苦手寄り）</option>
+          </select>
+        </div>
+
         <div class="big mono" id="frontText">—</div>
         <div id="answerBox" style="display:none">
           <div class="hr"></div>
@@ -242,6 +190,28 @@
             </select>
           </div>
         </div>
+
+        <div class="row" style="gap:10px;margin-top:10px;flex-wrap:wrap;align-items:flex-end">
+          <div class="field" style="min-width:140px">
+            <label>表示件数</label>
+            <select id="pageSize">
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </div>
+          <div class="field" style="min-width:240px">
+            <label>例文</label>
+            <label class="muted small" style="display:flex;gap:8px;align-items:center">
+              <input type="checkbox" id="showExampleInList" checked />
+              一覧に表示（英語1行）
+            </label>
+          </div>
+          <span class="right muted small" id="listPagerInfo"></span>
+          <button class="btn" id="prevPageBtn" type="button">前へ</button>
+          <button class="btn" id="nextPageBtn" type="button">次へ</button>
+        </div>
+
         <div style="overflow:auto">
           <table>
             <thead>
@@ -288,6 +258,20 @@
           <button class="btn" id="sampleBtn">サンプルを追加</button>
           <button class="btn danger right" id="clearBtn">全消し</button>
         </div>
+        <div class="hr"></div>
+        <h2>一括削除（タグ指定）</h2>
+        <div class="muted small">カンマ区切りでタグを入れると、その<strong>全タグを含む</strong>カードをまとめて削除します（例：<span class="mono">business,collocation,toeic</span>）。</div>
+        <div class="split" style="margin-top:10px">
+          <div class="field">
+            <label>削除するタグ（AND条件）</label>
+            <input id="bulkDeleteTags" placeholder="business,collocation,toeic" />
+          </div>
+          <div class="field">
+            <label>&nbsp;</label>
+            <button class="btn danger" id="bulkDeleteBtn">このタグのカードを一括削除</button>
+          </div>
+        </div>
+
 
         <div class="hr"></div>
         <div class="muted small">
@@ -438,6 +422,40 @@
     let currentCard = null;
     let revealed = false;
 
+    // ====== Study mode (自由/期日/未学習/弱点) ======
+    const MODE_KEY = 'phrasecards_mode';
+    let studyMode = localStorage.getItem(MODE_KEY) || 'free'; // ←デフォルトは自由
+
+    function setStudyMode(m){
+      studyMode = m;
+      localStorage.setItem(MODE_KEY, studyMode);
+      buildQueue(true);
+      pickNext();
+      refreshStats();
+    }
+
+    // 学習済み = 一度でも評価（Again/Hard/Good/Easy）したカード
+    function studiedCount(){
+      return store.cards.filter(c => Number(c.srs?.repetition || 0) > 0).length;
+    }
+
+    // 今日レビュー = 今日0:00以降に updatedAt が更新されたカード数
+    function reviewedTodayCount(){
+      const d = new Date();
+      d.setHours(0,0,0,0);
+      const start = d.getTime();
+      return store.cards.filter(c => Number(c.updatedAt||0) >= start).length;
+    }
+
+    function modeLabel(){
+      switch(studyMode){
+        case 'due': return '期日（SRS）';
+        case 'new': return '未学習';
+        case 'weak': return '弱点';
+        default: return '自由';
+      }
+    }
+
     // ====== Views ======
     const views = ['study','add','list','settings'];
     function showView(name){
@@ -461,10 +479,29 @@
     }
 
     function buildQueue(shuffle=false){
-      studyQueue = store.cards
-        .filter(isDue)
-        .sort((a,b)=> (a.srs?.due??0) - (b.srs?.due??0));
-      if(shuffle) studyQueue = studyQueue.sort(()=>Math.random()-0.5);
+      let base = [];
+
+      if(studyMode === 'due'){
+        base = store.cards
+          .filter(isDue)
+          .sort((a,b)=> (a.srs?.due??0) - (b.srs?.due??0));
+      } else if(studyMode === 'new'){
+        base = store.cards.filter(c => Number(c.srs?.repetition || 0) === 0);
+        shuffle = true;
+      } else if(studyMode === 'weak'){
+        // ease が低い（苦手）順に上位300枚だけ
+        base = store.cards.slice()
+          .sort((a,b)=> (a.srs?.ease ?? 2.5) - (b.srs?.ease ?? 2.5))
+          .slice(0, Math.min(300, store.cards.length));
+        shuffle = true;
+      } else {
+        // free: 全カードをシャッフルして回す
+        base = store.cards.slice();
+        shuffle = true;
+      }
+
+      if(shuffle) base = base.sort(()=>Math.random()-0.5);
+      studyQueue = base;
     }
 
     function pickNext(){
@@ -473,21 +510,44 @@
       $('studyControls').style.display = 'flex';
       $('revealBtn').disabled = false;
 
-      if(studyQueue.length === 0){
+      if(store.cards.length === 0){
         currentCard = null;
-        $('frontText').textContent = '今日の分は完了！';
+        $('frontText').textContent = 'カードがありません';
         $('backText').textContent = '';
         $('exampleText').textContent = '';
-        $('dueInfo').textContent = '期日になったカードがありません。カードを追加するとここに出ます。';
         $('nextDueHint').textContent = '';
+        $('dueInfo').textContent = '右の「クイック追加」か「追加」タブからカードを入れてください。';
         return;
       }
+
+      // いつでも回せるように、空なら自動で組み直す（freeなら無限に回せる）
+      if(studyQueue.length === 0){
+        buildQueue(true);
+      }
+
+      // 期日モードで0枚なら、自由に切り替えて続行（制限しない）
+      if(studyQueue.length === 0 && studyMode === 'due'){
+        setStudyMode('free');
+        return;
+      }
+
+      if(studyQueue.length === 0){
+        // 念のため
+        currentCard = null;
+        $('frontText').textContent = '準備中…';
+        $('backText').textContent = '';
+        $('exampleText').textContent = '';
+        $('nextDueHint').textContent = '';
+        refreshStats();
+        return;
+      }
+
       currentCard = studyQueue.shift();
       $('frontText').textContent = currentCard.front;
       $('backText').textContent = currentCard.back;
       $('exampleText').textContent = currentCard.example || '—';
-      $('dueInfo').textContent = `今日の期日: ${countDue()}枚 / 全${store.cards.length}枚`;
       $('nextDueHint').textContent = '';
+      refreshStats();
     }
 
     function normalizeTags(s){
@@ -549,30 +609,99 @@ function matches(card, q, tag){
   return s.includes(q.toLowerCase());
 }
 
+
+    // ====== List paging (heavy DOM対策) ======
+    const LIST_STATE_KEY = 'phrasecards_list_state_v1';
+    let listState = {};
+    try{ listState = JSON.parse(localStorage.getItem(LIST_STATE_KEY) || '{}'); }catch(e){ listState = {}; }
+    listState.pageSize = Number(listState.pageSize || 100);
+    if(![50,100,200].includes(listState.pageSize)) listState.pageSize = 100;
+    listState.page = Number(listState.page || 0);
+    listState.showExample = (listState.showExample === undefined) ? true : !!listState.showExample;
+
+    function saveListState(){
+      localStorage.setItem(LIST_STATE_KEY, JSON.stringify({
+        pageSize: listState.pageSize,
+        page: listState.page,
+        showExample: listState.showExample
+      }));
+    }
+
+    function examplePreview(c){
+      const ex = (c.example||'').trim();
+      if(!ex) return '';
+      // 例文は1行目だけ（バイリンガルの英語行）
+      return ex.split('\n')[0].slice(0, 200);
+    }
+
     function renderList(){
       renderTagFilter();
       const q = $('search').value.trim();
       const tag = $('tagFilter').value;
       const body = $('listBody');
-      body.innerHTML = '';
 
       const filtered = store.cards.filter(c=>matches(c,q,tag));
-      if(filtered.length===0){
+      const total = filtered.length;
+
+      // pager
+      const pageSize = listState.pageSize;
+      const maxPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+      if(!Number.isFinite(listState.page) || listState.page < 0) listState.page = 0;
+      if(listState.page > maxPage) listState.page = maxPage;
+
+      const start = total ? (listState.page * pageSize) : 0;
+      const end = total ? Math.min(total, start + pageSize) : 0;
+
+      const info = $('listPagerInfo');
+      const prevBtn = $('prevPageBtn');
+      const nextBtn = $('nextPageBtn');
+      if(info) info.textContent = total ? `${start+1}–${end} / ${total}` : `0 / 0`;
+      if(prevBtn) prevBtn.disabled = (listState.page <= 0);
+      if(nextBtn) nextBtn.disabled = (listState.page >= maxPage);
+
+      body.innerHTML = '';
+
+      if(total===0){
         const tr = document.createElement('tr');
         tr.innerHTML = `<td colspan="5" class="muted">該当なし</td>`;
         body.appendChild(tr);
         return;
       }
 
+      const slice = filtered.slice(start, end);
+      const frag = document.createDocumentFragment();
+
+      for(const c of slice){
+        const tr = document.createElement('tr');
+        const tagsHtml = (c.tags||[]).map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join('');
+        const due = c.srs?.due ? fmtDate(c.srs.due) : '—';
+        const exPrev = listState.showExample ? escapeHtml(examplePreview(c)) : '';
+        tr.innerHTML = `
+          <td>
+            <div class="mono" style="white-space:pre-wrap">${escapeHtml(c.front)}</div>
+            ${listState.showExample ? `<div class="tiny">${exPrev || '<span class="muted">—</span>'}</div>` : ''}
+          </td>
+          <td><div style="white-space:pre-wrap">${escapeHtml(c.back)}</div></td>
+          <td>${tagsHtml || '<span class="muted">—</span>'}</td>
+          <td><span class="small ${isDue(c)?'':'muted'}">${isDue(c)?'今日':due}</span></td>
+          <td>
+            <button class="btn" data-act="edit" data-id="${c.id}">編集</button>
+            <button class="btn danger" data-act="del" data-id="${c.id}">削除</button>
+          </td>
+        `;
+        frag.appendChild(tr);
+      }
+
+      body.appendChild(frag);
+      saveListState();
+    }
+
       for(const c of filtered){
         const tr = document.createElement('tr');
         const tagsHtml = (c.tags||[]).map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join('');
         const due = c.srs?.due ? fmtDate(c.srs.due) : '—';
         tr.innerHTML = `
-          <td>
-            <div class="mono" style="white-space:pre-wrap">${escapeHtml(c.front)}</div>
-            <button type="button" class="exBtn" data-act="ex" data-id="${c.id}">例文</button>
-          </td>
+          <td><div class="mono" style="white-space:pre-wrap">${escapeHtml(c.front)}</div></td>
           <td><div style="white-space:pre-wrap">${escapeHtml(c.back)}</div></td>
           <td>${tagsHtml || '<span class="muted">—</span>'}</td>
           <td><span class="small ${isDue(c)?'':'muted'}">${isDue(c)?'今日':due}</span></td>
@@ -586,22 +715,42 @@ function matches(card, q, tag){
     }
 
     
-    // ===== Example modal (click) =====
-    function closeExampleModal(){
-      const overlay = $('exModal');
-      if(!overlay) return;
-      overlay.style.display = 'none';
+    // ====== List controls wiring ======
+    let listTimer = null;
+    function scheduleRenderList(resetPage=false){
+      if(resetPage) listState.page = 0;
+      clearTimeout(listTimer);
+      listTimer = setTimeout(()=>{ 
+        if(document.getElementById('view-list').style.display !== 'none') renderList();
+      }, 120);
     }
-    $('exModalClose')?.addEventListener('click', (e)=>{
-      e.preventDefault(); e.stopPropagation();
-      closeExampleModal();
+
+    // init UI values
+    try{
+      const ps = $('pageSize');
+      if(ps) ps.value = String(listState.pageSize);
+      const se = $('showExampleInList');
+      if(se) se.checked = !!listState.showExample;
+    }catch(e){}
+
+    $('search')?.addEventListener('input', ()=>scheduleRenderList(true));
+    $('tagFilter')?.addEventListener('change', ()=>scheduleRenderList(true));
+    $('pageSize')?.addEventListener('change', ()=>{
+      listState.pageSize = Number($('pageSize').value || 100);
+      if(![50,100,200].includes(listState.pageSize)) listState.pageSize = 100;
+      scheduleRenderList(true);
     });
-    $('exModal')?.addEventListener('click', (e)=>{
-      // click outside the card closes
-      if(e.target && e.target.id==='exModal') closeExampleModal();
+    $('showExampleInList')?.addEventListener('change', ()=>{
+      listState.showExample = $('showExampleInList').checked;
+      scheduleRenderList(false);
     });
-    document.addEventListener('keydown', (e)=>{
-      if(e.key==='Escape') closeExampleModal();
+    $('prevPageBtn')?.addEventListener('click', ()=>{
+      listState.page = Math.max(0, (listState.page||0) - 1);
+      scheduleRenderList(false);
+    });
+    $('nextPageBtn')?.addEventListener('click', ()=>{
+      listState.page = (listState.page||0) + 1;
+      scheduleRenderList(false);
     });
 
 // ====== Cloud Sync (Firebase) ======
@@ -858,20 +1007,6 @@ function matches(card, q, tag){
       const idx = store.cards.findIndex(c=>c.id===id);
       if(idx<0) return;
 
-            if(act==='ex'){
-        e.preventDefault();
-        e.stopPropagation();
-        const c = store.cards[idx];
-        const overlay = $('exModal');
-        const title = $('exModalTitle');
-        const body = $('exModalBody');
-        title.textContent = c.front || '';
-        const ex = (c.example||'').trim();
-        body.textContent = ex ? ex : '（例文なし）';
-        overlay.style.display = 'flex';
-        return;
-      }
-
       if(act==='del'){
         if(confirm('削除しますか？')){
           store.cards.splice(idx,1);
@@ -971,19 +1106,57 @@ function matches(card, q, tag){
       }
     });
 
+    // ====== Bulk delete by tags (AND) ======
+    const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
+    if(bulkDeleteBtn){
+      bulkDeleteBtn.addEventListener('click', ()=>{
+        const input = document.getElementById('bulkDeleteTags');
+        const tags = (input?.value || '')
+          .split(',')
+          .map(t=>t.trim())
+          .filter(Boolean);
+        if(tags.length === 0){
+          toast('タグを入力してください');
+          return;
+        }
+        const before = store.cards.length;
+        const toDelete = store.cards.filter(c => tags.every(t => (c.tags||[]).includes(t))).length;
+        if(toDelete === 0){
+          toast('該当カードがありません');
+          return;
+        }
+        if(!confirm(`「${tags.join(', ')}」を全て含むカード ${toDelete}枚を削除します。よろしいですか？`)) return;
+        store.cards = store.cards.filter(c => !tags.every(t => (c.tags||[]).includes(t)));
+        store.updatedAtMs = now();
+        save();
+        toast(`削除しました（${before}→${store.cards.length}）`);
+      });
+    }
+
     // ====== Refresh ======
     function refreshStats(){
-      $('statsPill').textContent = `期日: ${countDue()}枚 / 全${store.cards.length}枚`;
-      $('dueInfo').textContent = `今日の期日: ${countDue()}枚 / 全${store.cards.length}枚`;
+      const total = store.cards.length;
+      const today = reviewedTodayCount();
+      const studied = studiedCount();
+
+      $('statsPill').textContent = `今日レビュー: ${today} / 学習済: ${studied} / 全${total}`;
+      const due = countDue();
+      const extra = (studyMode === 'due') ? ` / 期日: ${due}枚` : '';
+      $('dueInfo').textContent = `モード: ${modeLabel()} / 今日レビュー: ${today} / 学習済: ${studied} / 全${total}` + extra;
     }
 
     function refreshAll(){
       refreshStats();
       renderTagFilter();
       buildQueue(false);
-      if(!currentCard || !store.cards.find(c=>c.id===currentCard.id) || (currentCard && !isDue(currentCard))){
+
+      const exists = currentCard && store.cards.find(c=>c.id===currentCard.id);
+      if(!exists){
+        pickNext();
+      } else if(studyMode === 'due' && !isDue(currentCard)){
         pickNext();
       }
+
       if(document.getElementById('view-list').style.display !== 'none') renderList();
     }
 
@@ -1005,22 +1178,20 @@ function matches(card, q, tag){
 
     // ====== Boot ======
     loadLocal();
-    buildQueue(false);
+
+    // mode UI
+    const modeSel = $('modeSelect');
+    if(modeSel){
+      modeSel.value = studyMode;
+      modeSel.addEventListener('change', ()=> setStudyMode(modeSel.value));
+    }
+
+    buildQueue(true);
     pickNext();
     refreshAll();
 
     // Firebase init (optional)
     initFirebase().catch(()=>setSyncUI('Sync: Off（初期化失敗）'));
   </script>
-
-  <div id="exModal" class="modalOverlay" role="dialog" aria-modal="true" aria-label="例文">
-    <div class="modalCard">
-      <div class="modalHead">
-        <div class="modalTitle" id="exModalTitle"></div>
-        <button type="button" class="modalClose" id="exModalClose">閉じる</button>
-      </div>
-      <div class="modalBody" id="exModalBody"></div>
-    </div>
-  </div>
 </body>
 </html>
