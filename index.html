@@ -238,7 +238,7 @@
         </div>
         <div class="hr"></div>
         <div class="row" style="gap:10px">
-          <button class="btn ok" id="loginBtn">Googleでログイン</button>
+          <button class="btn ok" id="loginBtn" type="button">Googleでログイン</button>
           <button class="btn" id="syncNowBtn" disabled>今すぐ同期</button>
           <button class="btn danger" id="logoutBtn" disabled>ログアウト</button>
           <span class="right muted small" id="syncStatus">Sync: Off</span>
@@ -284,7 +284,13 @@
 
   <div class="toast" id="toast"></div>
 
-  <script type="module">
+  
+  <!-- Firebase (compat) for wider mobile support -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+<script type="module">
     // =====================================
     // 0) Firebase設定（ここを置き換える）
     // =====================================
@@ -736,11 +742,14 @@ function matches(card, q, tag){
     });
 
 // ====== Cloud Sync (Firebase) ======
+    // NOTE: Use Firebase compat SDK (no dynamic import) for better mobile support.
     let cloudEnabled = false;
     let app = null, auth = null, db = null;
     let currentUser = null;
-    let unsubSnapshot = null;
+    let unsubMeta = null;
     let lastRemoteUpdatedAtMs = 0;
+
+    const CHUNK_SIZE = 150; // keep Firestore docs under 1MB
 
     // Debounced push
     let pushTimer = null;
@@ -754,9 +763,21 @@ function matches(card, q, tag){
       return cfg && cfg.apiKey && !String(cfg.apiKey).includes('YOUR_') && cfg.projectId && cfg.appId && cfg.authDomain;
     }
 
+    function setAuthError(msg){
+      const el = $('authError');
+      if(!el) return;
+      if(!msg){
+        el.style.display='none';
+        el.textContent='';
+      }else{
+        el.textContent = String(msg);
+        el.style.display = 'inline';
+      }
+    }
+
     function mergeStores(local, remote){
-      const l = local?.cards || [];
-      const r = remote?.cards || [];
+      const l = (local && local.cards) ? local.cards : [];
+      const r = (remote && remote.cards) ? remote.cards : [];
       const map = new Map();
 
       const put = (c)=>{
@@ -779,72 +800,96 @@ function matches(card, q, tag){
       return { version: 2, updatedAtMs: mergedUpdatedAt, cards: mergedCards };
     }
 
+    function chunkCards(cards){
+      const out = [];
+      for(let i=0;i<cards.length;i+=CHUNK_SIZE){
+        out.push(cards.slice(i, i+CHUNK_SIZE));
+      }
+      return out;
+    }
+
+    function metaRef(uid){
+      return db.collection('users').doc(uid).collection('phrasecards_meta').doc('main');
+    }
+    function chunksCol(uid){
+      return db.collection('users').doc(uid).collection('phrasecards_chunks');
+    }
+
     async function initFirebase(){
+      // Always make button tappable; show feedback if not configured.
+      try{
+        $('loginBtn')?.addEventListener('click', ()=>{ if(!cloudEnabled) toast('同期設定が無効です（firebaseConfig / Authorized domains を確認）'); });
+      }catch(e){}
+
       if(!validFirebaseConfig(firebaseConfig)){
         setSyncUI('Sync: Off（未設定）');
+        cloudEnabled = false;
         return;
       }
 
-      // Dynamic import from Firebase CDN
-      const [{ initializeApp }, authMod, fsMod] = await Promise.all([
-        import(`https://www.gstatic.com/firebasejs/${FB_VER}/firebase-app.js`),
-        import(`https://www.gstatic.com/firebasejs/${FB_VER}/firebase-auth.js`),
-        import(`https://www.gstatic.com/firebasejs/${FB_VER}/firebase-firestore.js`),
-      ]);
+      if(!window.firebase){
+        setSyncUI('Sync: Firebase load error');
+        setAuthError('Firebase SDKが読み込めませんでした（通信/ブロッカー/古いブラウザの可能性）');
+        cloudEnabled = false;
+        return;
+      }
 
-      const { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut, setPersistence, browserLocalPersistence } = authMod;
-      const { getFirestore, doc, getDoc, setDoc, onSnapshot } = fsMod;
+      try{
+        if(!firebase.apps || firebase.apps.length===0){
+          app = firebase.initializeApp(firebaseConfig);
+        }else{
+          app = firebase.apps[0];
+        }
+        auth = firebase.auth();
+        db = firebase.firestore();
+        cloudEnabled = true;
+      }catch(e){
+        setSyncUI('Sync: Init error');
+        setAuthError('Firebase初期化に失敗: ' + (e && (e.message||e.code) ? (e.message||e.code) : e));
+        cloudEnabled = false;
+        return;
+      }
 
-      app = initializeApp(firebaseConfig);
-      auth = getAuth(app);
-      // keep login across refresh (mobile friendly)
-      try{ await setPersistence(auth, browserLocalPersistence); }catch(e){}
-      db = getFirestore(app);
-      cloudEnabled = true;
+      // Keep login across refresh (mobile friendly)
+      try{ await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
 
       // Handle redirect result (mobile)
       try{
-        const rr = await getRedirectResult(auth);
-        if(rr && rr.user){ $('authError').style.display='none'; }
+        await auth.getRedirectResult();
       }catch(e){
-        const msg = (e && (e.code||e.message)) ? String(e.code||e.message) : 'auth redirect error';
-        $('authError').textContent = 'Login error: ' + msg;
-        $('authError').style.display = 'inline';
+        setAuthError('Login error: ' + (e && (e.code||e.message) ? (e.code||e.message) : e));
       }
 
-      // UI handlers
-      $('loginBtn').addEventListener('click', async ()=>{
+      // UI handlers (explicit)
+      $('loginBtn').onclick = async ()=>{
         if(!cloudEnabled) return;
-        const provider = new GoogleAuthProvider();
-        $('authError').style.display='none';
+        setAuthError('');
+        const provider = new firebase.auth.GoogleAuthProvider();
         try{
-          if(isMobile()) await signInWithRedirect(auth, provider);
-          else await signInWithPopup(auth, provider);
+          if(isMobile()) await auth.signInWithRedirect(provider);
+          else await auth.signInWithPopup(provider);
         }catch(e){
-          const code = String(e?.code||'');
-          const msg = String(e?.message||e);
-          $('authError').textContent = 'Login error: ' + (code||msg);
-          $('authError').style.display = 'inline';
-          // fallback to redirect for popup-blocked etc.
-          if(code.includes('popup') || code.includes('operation-not-supported')){
-            try{ await signInWithRedirect(auth, provider); }catch(_e){}
-          }
+          const code = (e && e.code) ? String(e.code) : '';
+          const msg = (e && e.message) ? String(e.message) : String(e);
+          setAuthError('Login error: ' + (code || msg));
+          // fallback
+          try{ await auth.signInWithRedirect(provider); }catch(_e){}
           toast('ログインに失敗しました（FirebaseのAuthorized domainsを確認）');
         }
-      });
+      };
 
-      $('logoutBtn').addEventListener('click', async ()=>{
+      $('logoutBtn').onclick = async ()=>{
         if(!auth) return;
-        try{ await signOut(auth); }catch(e){}
-      });
+        try{ await auth.signOut(); }catch(e){}
+      };
 
-      $('syncNowBtn').addEventListener('click', async ()=>{
+      $('syncNowBtn').onclick = async ()=>{
         await syncNow();
-      });
+      };
 
-      onAuthStateChanged(auth, async (user)=>{
+      auth.onAuthStateChanged(async (user)=>{
         currentUser = user || null;
-        if(unsubSnapshot){ unsubSnapshot(); unsubSnapshot = null; }
+        if(unsubMeta){ unsubMeta(); unsubMeta = null; }
         if(!currentUser){
           setSyncUI('Sync: Off');
           $('syncNowBtn').disabled = true;
@@ -858,27 +903,26 @@ function matches(card, q, tag){
         $('loginBtn').disabled = true;
         setSyncUI('Sync: Signed in');
 
-        const ref = doc(db, 'users', currentUser.uid, 'phrasecards', 'main');
-
         // Initial pull
-        const snap = await getDoc(ref);
-        if(snap.exists()){
-          const remote = snap.data();
-          applyRemote(remote);
-        } else {
-          // first time: if local has cards, seed cloud; otherwise do NOT create empty cloud.
+        const ok = await pullFromCloud();
+        if(!ok){
+          // If cloud empty: seed only if local has cards
           if((store.cards||[]).length>0){
             await pushToCloud();
+            toast('クラウドを初期化しました');
           }else{
-            setSyncUI('Sync: Cloud empty (no cards)');
+            setSyncUI('Sync: Cloud empty');
             toast('クラウドにカードがありません。PCでログインして同期（アップロード）するか、JSONをインポートしてください');
           }
         }
 
-        // Live updates
-        unsubSnapshot = onSnapshot(ref, (s)=>{
-          if(!s.exists()) return;
-          applyRemote(s.data());
+        // Listen to meta doc only (cheap). When updatedAtMs changes, pull chunks.
+        const mref = metaRef(currentUser.uid);
+        unsubMeta = mref.onSnapshot(async (snap)=>{
+          if(!snap.exists) return;
+          const remoteUpdatedAtMs = Number((snap.data()||{}).updatedAtMs || 0);
+          if(remoteUpdatedAtMs <= lastRemoteUpdatedAtMs) return;
+          await pullFromCloud();
         });
       });
 
@@ -890,9 +934,44 @@ function matches(card, q, tag){
       }
 
       async function pullFromCloud(){
-        const ref = doc(db, 'users', currentUser.uid, 'phrasecards', 'main');
-        const snap = await getDoc(ref);
-        if(snap.exists()) applyRemote(snap.data());
+        if(!currentUser) return false;
+        const uid = currentUser.uid;
+        const mref = metaRef(uid);
+        let msnap;
+        try{
+          msnap = await mref.get();
+        }catch(e){
+          setSyncUI('Sync: Error');
+          setAuthError('Cloud read error: ' + (e && (e.code||e.message) ? (e.code||e.message) : e));
+          return false;
+        }
+        if(!msnap.exists) return false;
+
+        const meta = msnap.data() || {};
+        const remoteUpdatedAtMs = Number(meta.updatedAtMs || 0);
+        const chunkCount = Number(meta.chunkCount || 0);
+
+        if(chunkCount <= 0){
+          lastRemoteUpdatedAtMs = remoteUpdatedAtMs;
+          return true;
+        }
+
+        let all = [];
+        try{
+          const q = await chunksCol(uid).orderBy('index').limit(chunkCount).get();
+          q.forEach(doc=>{
+            const d = doc.data() || {};
+            const arr = d.cards || [];
+            if(Array.isArray(arr)) all = all.concat(arr);
+          });
+        }catch(e){
+          setSyncUI('Sync: Error');
+          setAuthError('Cloud chunk read error: ' + (e && (e.code||e.message) ? (e.code||e.message) : e));
+          return false;
+        }
+
+        applyRemote({ updatedAtMs: remoteUpdatedAtMs, cards: all });
+        return true;
       }
 
       function applyRemote(remote){
@@ -902,7 +981,6 @@ function matches(card, q, tag){
 
         const merged = mergeStores(store, { version: 2, updatedAtMs: remoteUpdatedAtMs, cards: (remote.cards||[]) });
 
-        // If merge changes something, apply.
         const changed = JSON.stringify(store) !== JSON.stringify(merged);
         if(changed){
           store = merged;
@@ -914,23 +992,53 @@ function matches(card, q, tag){
 
       async function pushToCloud(){
         if(!currentUser) return;
-        const ref = doc(db, 'users', currentUser.uid, 'phrasecards', 'main');
-        // ensure monotonic
+        const uid = currentUser.uid;
+
         if(store.updatedAtMs < now()) store.updatedAtMs = now();
-        const payload = {
+        const chunks = chunkCards(store.cards);
+
+        const mref = metaRef(uid);
+        const ccol = chunksCol(uid);
+
+        const batch = db.batch();
+        batch.set(mref, {
           version: 2,
           updatedAtMs: store.updatedAtMs,
-          cards: store.cards,
-        };
+          chunkSize: CHUNK_SIZE,
+          chunkCount: chunks.length,
+        }, { merge: true });
+
+        for(let i=0;i<chunks.length;i++){
+          const id = String(i).padStart(3,'0');
+          batch.set(ccol.doc(id), {
+            index: i,
+            updatedAtMs: store.updatedAtMs,
+            cards: chunks[i],
+          }, { merge: false });
+        }
+
+        // Delete old extra chunks if any (best effort)
         try{
-          await setDoc(ref, payload, { merge: true });
+          const existing = await ccol.get();
+          existing.forEach(doc=>{
+            const d = doc.data() || {};
+            const idx = Number(d.index);
+            if(Number.isFinite(idx) && idx >= chunks.length){
+              batch.delete(doc.ref);
+            }
+          });
+        }catch(e){}
+
+        try{
+          await batch.commit();
           setSyncUI('Sync: Up to date');
+          setAuthError('');
         }catch(e){
           setSyncUI('Sync: Error');
+          setAuthError('Cloud write error: ' + (e && (e.code||e.message) ? (e.code||e.message) : e));
         }
       }
 
-      // expose for save()
       window.__pushToCloud = ()=>pushToCloud();
     }
 
@@ -938,6 +1046,7 @@ function matches(card, q, tag){
       $('syncStatus').textContent = text;
       $('syncPill').textContent = text;
     }
+
 
     // ====== Save wrapper ======
     function save(){
