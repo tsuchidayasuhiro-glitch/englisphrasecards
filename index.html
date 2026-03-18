@@ -696,24 +696,6 @@ function matches(card, q, tag){
       saveListState();
     }
 
-      for(const c of filtered){
-        const tr = document.createElement('tr');
-        const tagsHtml = (c.tags||[]).map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join('');
-        const due = c.srs?.due ? fmtDate(c.srs.due) : '—';
-        tr.innerHTML = `
-          <td><div class="mono" style="white-space:pre-wrap">${escapeHtml(c.front)}</div></td>
-          <td><div style="white-space:pre-wrap">${escapeHtml(c.back)}</div></td>
-          <td>${tagsHtml || '<span class="muted">—</span>'}</td>
-          <td><span class="small ${isDue(c)?'':'muted'}">${isDue(c)?'今日':due}</span></td>
-          <td>
-            <button class="btn" data-act="edit" data-id="${c.id}">編集</button>
-            <button class="btn danger" data-act="del" data-id="${c.id}">削除</button>
-          </td>
-        `;
-        body.appendChild(tr);
-      }
-    }
-
     
     // ====== List controls wiring ======
     let listTimer = null;
