@@ -630,8 +630,18 @@ function matches(card, q, tag){
     function examplePreview(c){
       const ex = (c.example||'').trim();
       if(!ex) return '';
-      // 例文は1行目だけ（バイリンガルの英語行）
-      return ex.split('\n')[0].slice(0, 200);
+      const lines = ex.split('\n');
+      const en = (lines[0]||'').trim();
+
+      // バイリンガルなら2行目に日本語が入っている想定。
+      // 念のため、2行目以降で日本語文字（ひらがな/カタカナ/漢字）を含む行を探す。
+      let ja = (lines[1]||'').trim();
+      for(let k=1;k<lines.length;k++){
+        if(/[\u3040-\u30FF\u4E00-\u9FFF]/.test(lines[k])){ ja = lines[k].trim(); break; }
+      }
+
+      const out = [en, ja].filter(Boolean).join('\n');
+      return out.slice(0, 360);
     }
 
     function renderList(){
