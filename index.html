@@ -1409,6 +1409,10 @@ document.querySelectorAll('[data-grade]').forEach(btn=>{
 
     // ====== Keyboard shortcuts ======
     window.addEventListener('keydown', (e)=>{
+      // Don't hijack keys while typing in inputs/textarea (fix: half-width space in Quick Add, etc.)
+      const t = e.target;
+      if(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+
       if(e.key === ' '){
         if(document.getElementById('view-study').style.display === 'none') return;
         e.preventDefault();
