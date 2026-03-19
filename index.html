@@ -100,6 +100,7 @@
         <div class="row" id="studyEditRow" style="margin-top:10px; gap:10px; flex-wrap:wrap">
           <button class="btn" id="editStudyBtn" type="button">編集</button>
           <button class="btn danger" id="deleteStudyBtn" type="button">削除</button>
+          <button class="btn" id="searchStudyBtn" type="button">検索</button>
           <span class="right muted small" id="studyCardHint"></span>
         </div>
 
@@ -1199,7 +1200,18 @@ function matches(card, q, tag){
       pickNext();
     });
 
-    document.querySelectorAll('[data-grade]').forEach(btn=>{
+    
+    $('searchStudyBtn')?.addEventListener('click', ()=>{
+      if(!currentCard) return;
+      const q = (currentCard.front||'').trim();
+      if(!q) return;
+      const url = 'https://ejje.weblio.jp/content/' + encodeURIComponent(q);
+      // open in new tab (fallback to same tab if blocked)
+      const w = window.open(url, '_blank', 'noopener,noreferrer');
+      if(!w) window.location.href = url;
+    });
+
+document.querySelectorAll('[data-grade]').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         if(!currentCard) return;
         const grade = Number(btn.dataset.grade);
