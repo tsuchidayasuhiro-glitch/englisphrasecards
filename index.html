@@ -97,6 +97,12 @@
         </div>
 
         <div class="big mono" id="frontText">—</div>
+        <div class="row" id="studyEditRow" style="margin-top:10px; gap:10px; flex-wrap:wrap">
+          <button class="btn" id="editStudyBtn" type="button">編集</button>
+          <button class="btn danger" id="deleteStudyBtn" type="button">削除</button>
+          <span class="right muted small" id="studyCardHint"></span>
+        </div>
+
         <div id="answerBox" style="display:none">
           <div class="hr"></div>
           <div class="muted small">意味</div>
@@ -529,6 +535,7 @@
         $('backText').textContent = '';
         $('exampleText').textContent = '';
         $('nextDueHint').textContent = '';
+        $('studyCardHint').textContent = '';
         $('dueInfo').textContent = '右の「クイック追加」か「追加」タブからカードを入れてください。';
         return;
       }
@@ -551,6 +558,7 @@
         $('backText').textContent = '';
         $('exampleText').textContent = '';
         $('nextDueHint').textContent = '';
+        $('studyCardHint').textContent = '';
         refreshStats();
         return;
       }
@@ -1140,6 +1148,55 @@ function matches(card, q, tag){
       buildQueue(true);
       pickNext();
       toast('シャッフルしました');
+    });
+
+    // Study: edit/delete current card
+    $('editStudyBtn')?.addEventListener('click', ()=>{
+      if(!currentCard) return;
+      const idx = store.cards.findIndex(c=>c.id===currentCard.id);
+      if(idx<0) return;
+      const c = store.cards[idx];
+      const nf = prompt('表（英語）', c.front);
+      if(nf===null) return;
+      const nb = prompt('裏（意味）', c.back);
+      if(nb===null) return;
+      const ne = prompt('例文/メモ', c.example||'');
+      if(ne===null) return;
+      const nt = prompt('タグ（カンマ区切り）', (c.tags||[]).join(', '));
+      if(nt===null) return;
+
+      c.front = nf.trim();
+      c.back = nb.trim();
+      c.example = ne.trim();
+      c.tags = normalizeTags(nt);
+      touch(c);
+
+      // reflect immediately on study screen (don't advance)
+      currentCard = c;
+      $('frontText').textContent = c.front || '—';
+      $('backText').textContent = c.back || '';
+      $('exampleText').textContent = c.example || '';
+      $('studyCardHint').textContent = (c.tags && c.tags.length) ? ('#' + c.tags.join(' #')) : '';
+      toast('更新しました');
+      save();
+    });
+
+    $('deleteStudyBtn')?.addEventListener('click', ()=>{
+      if(!currentCard) return;
+      const idx = store.cards.findIndex(c=>c.id===currentCard.id);
+      if(idx<0) return;
+      if(!confirm('このカードを削除しますか？')) return;
+
+      const delId = currentCard.id;
+      store.cards.splice(idx,1);
+      store.updatedAtMs = now();
+
+      // remove from queue
+      studyQueue = studyQueue.filter(x=>x && x.id !== delId);
+
+      toast('削除しました');
+      save();
+      pickNext();
     });
 
     document.querySelectorAll('[data-grade]').forEach(btn=>{
