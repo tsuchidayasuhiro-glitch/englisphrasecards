@@ -1201,29 +1201,28 @@ function matches(card, q, tag){
     });
 
     
-    $('searchStudyBtn')?.addEventListener('click', ()=>{
+    $('searchStudyBtn')?.addEventListener('click', (ev)=>{
+      ev?.preventDefault?.();
+      ev?.stopPropagation?.();
+
       if(!currentCard) return;
       const q = (currentCard.front||'').trim();
       if(!q) return;
+
       const url = 'https://ejje.weblio.jp/content/' + encodeURIComponent(q);
 
-      // Try opening a new tab/window without leaving the app page.
-      let w = null;
-      try{ w = window.open(url, '_blank', 'noopener,noreferrer'); }catch(e){ w = null; }
-
-      // Fallback: anchor click (still keeps current tab)
-      if(!w){
-        try{
-          const a = document.createElement('a');
-          a.href = url;
-          a.target = '_blank';
-          a.rel = 'noopener noreferrer';
-          a.style.display = 'none';
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-        }catch(e){}
-        toast('新しいタブで開けない場合は、ブラウザのポップアップ許可をONにしてください');
+      // Open in a new tab via anchor (single-shot, avoids double-open on some mobile browsers)
+      try{
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }catch(e){
+        toast('新しいタブで開けない場合は、ポップアップ/新規タブ許可をONにしてください');
       }
     });
 
