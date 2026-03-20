@@ -234,6 +234,7 @@
           <span class="right muted small" id="listPagerInfo"></span>
           <button class="btn" id="prevPageBtn" type="button">前へ</button>
           <button class="btn" id="nextPageBtn" type="button">次へ</button>
+          <button class="btn danger" id="bulkDeleteFilteredBtn" type="button">表示中を一括削除</button>
         </div>
 
         <div style="overflow:auto">
@@ -785,7 +786,7 @@ function matches(card, q, tag){
       listState.page = (listState.page||0) + 1;
       scheduleRenderList(false);
     });
-    $('bulkDeleteBtn')?.addEventListener('click', ()=>{
+    $('bulkDeleteFilteredBtn')?.addEventListener('click', ()=>{
       // Delete ALL cards matching current search/tag filter (across pages)
       const q = $('search')?.value?.trim() || '';
       const tag = $('tagFilter')?.value || '';
@@ -793,7 +794,8 @@ function matches(card, q, tag){
       const n = filtered.length;
       if(n===0){ toast('該当なし'); return; }
 
-      const msg = `検索条件に一致する ${n}件 を削除します。取り消せません。\n削除するには「${n}」と入力してください`;
+      const msg = `検索条件に一致する ${n}件 を削除します。取り消せません。
+削除するには「${n}」と入力してください`;
       const ans = prompt(msg, '');
       if(String(ans||'').trim() !== String(n)){
         toast('キャンセルしました');
@@ -810,6 +812,36 @@ function matches(card, q, tag){
       toast(`${n}件を削除しました`);
     });
 
+    $('bulkDeleteBtn')?.addEventListener('click', ()=>{
+      // Settings: bulk delete by tag AND-condition
+      const raw = ($('bulkDeleteTags')?.value || '').trim();
+      if(!raw){ toast('タグを入力してください'); return; }
+      const tags = raw.split(',').map(s=>s.trim()).filter(Boolean);
+      if(tags.length===0){ toast('タグを入力してください'); return; }
+
+      const hit = store.cards.filter(c=>{
+        const ct = c.tags || [];
+        return tags.every(t=>ct.includes(t));
+      });
+      const n = hit.length;
+      if(n===0){ toast('該当なし'); return; }
+
+      const msg = `タグ条件（AND）に一致する ${n}件 を削除します。取り消せません。
+削除するには「${n}」と入力してください`;
+      const ans = prompt(msg, '');
+      if(String(ans||'').trim() !== String(n)){
+        toast('キャンセルしました');
+        return;
+      }
+
+      const ids = new Set(hit.map(c=>c.id));
+      store.cards = store.cards.filter(c=>!ids.has(c.id));
+      store.updatedAtMs = now();
+      save();
+      scheduleRenderList(true);
+      refreshAll();
+      toast(`${n}件を削除しました`);
+    });
 
 // ====== Cloud Sync (Firebase) ======
     // Mobile-first: Firebase compat SDK + popup-first (redirect fallback) + chunked Firestore.
