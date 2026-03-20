@@ -66,6 +66,11 @@
     /* Study view spacing */
     #studyEditRow{ margin-bottom: 8px; }
     #studyControls{ margin-top: 10px; }
+
+
+    /* Vertical action buttons (rightmost column) */
+    td.actionsCol .btn{display:block;width:100%;}
+    td.actionsCol .btn + .btn{margin-top:8px;}
 </style>
 </head>
 <body>
@@ -780,6 +785,31 @@ function matches(card, q, tag){
       listState.page = (listState.page||0) + 1;
       scheduleRenderList(false);
     });
+    $('bulkDeleteBtn')?.addEventListener('click', ()=>{
+      // Delete ALL cards matching current search/tag filter (across pages)
+      const q = $('search')?.value?.trim() || '';
+      const tag = $('tagFilter')?.value || '';
+      const filtered = store.cards.filter(c=>matches(c,q,tag));
+      const n = filtered.length;
+      if(n===0){ toast('該当なし'); return; }
+
+      const msg = `検索条件に一致する ${n}件 を削除します。取り消せません。\n削除するには「${n}」と入力してください`;
+      const ans = prompt(msg, '');
+      if(String(ans||'').trim() !== String(n)){
+        toast('キャンセルしました');
+        return;
+      }
+
+      const ids = new Set(filtered.map(c=>c.id));
+      store.cards = store.cards.filter(c=>!ids.has(c.id));
+      store.updatedAtMs = now();
+      listState.page = 0;
+      save();
+      scheduleRenderList(true);
+      refreshAll();
+      toast(`${n}件を削除しました`);
+    });
+
 
 // ====== Cloud Sync (Firebase) ======
     // Mobile-first: Firebase compat SDK + popup-first (redirect fallback) + chunked Firestore.
