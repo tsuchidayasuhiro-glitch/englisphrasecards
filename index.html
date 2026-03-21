@@ -143,7 +143,7 @@
         <h2>クイック追加</h2>
         <div class="field">
           <label>英語フレーズ（表）</label>
-          <input id="qFront" placeholder="strike a chord (with me)" />
+          <input id="qFront" placeholder="strike a chord (with me)" / inputmode="latin" lang="en" autocapitalize="off" autocomplete="off" spellcheck="false">
         </div>
         <div class="field">
           <label>意味（裏・日本語）</label>
@@ -172,7 +172,7 @@
         <h2>カードを追加</h2>
         <div class="field">
           <label>英語フレーズ（表）</label>
-          <input id="front" placeholder="remind me of ..." />
+          <input id="front" placeholder="remind me of ..." / inputmode="latin" lang="en" autocapitalize="off" autocomplete="off" spellcheck="false">
         </div>
         <div class="field">
           <label>意味（裏・日本語）</label>
@@ -205,7 +205,7 @@
         <div class="split" style="margin-top:10px">
           <div class="field">
             <label>検索</label>
-            <input id="search" placeholder="chord / remind / 日本語でも" />
+            <input id="search" placeholder="chord / remind / 日本語でも" / inputmode="latin" lang="en" autocapitalize="off" autocomplete="off" spellcheck="false">
           </div>
           <div class="field">
             <label>タグ</label>
@@ -1185,7 +1185,8 @@ function matches(card, q, tag){
         $('back').value = '';
         $('example').value = '';
         $('tags').value = '';
-        showView('study');
+        // stay on add view
+        $('front').focus();
       }
     });
 
